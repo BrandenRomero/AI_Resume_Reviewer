@@ -1,0 +1,21 @@
+Jordan Lee
+jordan@example.com | Chicago, IL
+
+SUMMARY
+Computer science student building web tools and APIs with Python and JavaScript.
+
+SKILLS
+Python, Flask, JavaScript, React, SQL, Git, pytest
+
+EXPERIENCE
+Campus IT Assistant | University Help Desk | 2025-2026
+- Resolved student support tickets and documented recurring issues.
+- Created a Python script to clean support ticket exports for weekly reporting.
+
+PROJECTS
+Inventory Finder | Flask, React, SQLite | 2026
+- Built a Flask API to search inventory records and a React interface for filtering results.
+- Wrote pytest tests for API routes and documented setup steps in a README.
+
+EDUCATION
+B.S. Computer Science | Expected 2027

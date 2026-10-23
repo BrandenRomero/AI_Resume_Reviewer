@@ -1,0 +1,7 @@
+Junior Software Engineer — Example Company
+
+We are looking for an early career engineer who enjoys building accessible web applications.
+Responsibilities include developing Python REST APIs, improving React interfaces, writing SQL
+queries, adding automated tests, reviewing code with teammates, and maintaining clear technical
+documentation. Experience with Docker and cloud deployment is a plus. Applicants should be able
+to communicate technical tradeoffs clearly and collaborate across functions.

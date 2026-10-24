@@ -1,4 +1,4 @@
-"""Resume extraction, evidence checks, and OpenAI-backed review."""
+"""Resume extraction, evidence checks, and Gemini-backed review."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ import json
 from typing import Any, Callable
 
 from docx import Document
-from openai import AuthenticationError, OpenAI, RateLimitError
+from google import genai
+from google.genai import errors, types
 from pypdf import PdfReader
 
 MAX_BYTES = 5 * 1024 * 1024
@@ -143,52 +144,50 @@ def validate_review(data: Any, resume: str, job: str) -> dict[str, Any]:
     return result
 
 
-def analyze(resume: str, job: str, focus: str, api_key: str, model: str = "gpt-4o-mini",
-            client_factory: Callable[..., Any] = OpenAI) -> dict[str, Any]:
+def analyze(resume: str, job: str, focus: str, api_key: str, model: str = "gemini-3.8-flash",
+            client_factory: Callable[..., Any] = genai.Client) -> dict[str, Any]:
     resume, job = resume.strip()[:MAX_CHARS], job.strip()[:MAX_CHARS]
     if len(resume) < 80 or len(job) < 80:
         raise ReviewError("Enter at least 80 characters of resume text and job description.")
     if not api_key:
-        raise ReviewError("Set OPENAI_API_KEY in a .env file or your environment.")
-    client = client_factory(api_key=api_key, timeout=45.0, max_retries=1)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt(resume, job, focus)}]
+        raise ReviewError("Set GEMINI_API_KEY in a .env file or your environment.")
+    client = client_factory(api_key=api_key, http_options=types.HttpOptions(timeout=60_000))
+    prompt = user_prompt(resume, job, focus)
     for attempt in range(2):
+        raw = ""
         try:
-            response = client.chat.completions.create(
-                model=model, messages=messages, temperature=0.2,
-                response_format={"type": "json_object"},
+            response = client.models.generate_content(
+                model=model, contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                ),
             )
-            raw = response.choices[0].message.content
+            raw = response.text or ""
             parsed = json.loads(raw or "")
             return validate_review(parsed, resume, job)
         except (ValueError, ReviewError) as exc:
             if attempt:
                 raise ReviewError("The AI returned an invalid review after one retry. Please try again.") from exc
             # ITERATIVE REFINEMENT pattern: feed the validation failure into a second pass.
-            messages.extend([
-                {"role": "assistant", "content": (raw or "")[:12_000]},
-                {"role": "user", "content": f"Revise the JSON. Validation failed: {exc}. Keep all quoted evidence as exact document substrings."},
-            ])
-        except AuthenticationError as exc:
-            raise ReviewError(
-                "OpenAI rejected the API key. Replace OPENAI_API_KEY in .env with an active "
-                "key from your OpenAI Platform project, then try again."
-            ) from exc
-        except RateLimitError as exc:
-            code = getattr(exc, "code", None)
-            if code == "credit_balance_exhausted":
+            prompt += (
+                f"\n\nPrevious invalid JSON:\n{raw[:12_000]}\n"
+                f"Revise the JSON. Validation failed: {exc}. "
+                "Keep all quoted evidence as exact document substrings."
+            )
+        except errors.APIError as exc:
+            if exc.code in (400, 401, 403):
                 raise ReviewError(
-                    "OpenAI API credits are exhausted. Add credits in your OpenAI Platform "
-                    "billing settings, then try again."
+                    "Gemini rejected the request. Check GEMINI_API_KEY, model access, "
+                    "and your Google AI Studio project settings."
                 ) from exc
-            if code in {"organization_spend_limit_exceeded", "project_spend_limit_exceeded"}:
-                raise ReviewError("OpenAI API spend limit reached. Check your Platform billing limits.") from exc
-            if code == "organization_usage_limit_exceeded":
-                raise ReviewError("OpenAI API usage limit reached. Check your Platform usage limits.") from exc
-            raise ReviewError("OpenAI rate limit reached. Wait briefly and try again.") from exc
+            if exc.code == 404:
+                raise ReviewError("Gemini model not found or unavailable. Check GEMINI_MODEL.") from exc
+            if exc.code == 429:
+                raise ReviewError("Gemini quota or rate limit reached. Check Google AI Studio usage.") from exc
+            raise ReviewError("The Gemini service is unavailable. Try again shortly.") from exc
         except Exception as exc:
-            raise ReviewError("The AI request failed. Check the API key, model access, network, and account balance.") from exc
+            raise ReviewError("The Gemini request failed. Check your network and try again.") from exc
     raise ReviewError("Unable to complete the review.")
 
 

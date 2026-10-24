@@ -6,7 +6,7 @@ CS4680 Prompt Engineering, Assignment 3. A working Streamlit MVP that compares a
 
 Applicants often submit one general resume to different jobs. ResumeLens identifies where the resume explicitly supports the posting, where evidence is partial or absent, and how to make existing experience clearer. It does **not** predict hiring outcomes or claim to reproduce an applicant tracking system.
 
-The user uploads a resume (text-based PDF, DOCX, or TXT) or pastes text, pastes a job description, selects a review focus, and clicks **Review my resume**. The app sends these texts to an OpenAI model, validates the returned JSON and quoted evidence, then displays strengths, requirement comparisons, priorities, draft bullet revisions, and interview talking points. A Markdown export is available. Files are parsed in memory; no database or logging of document content is implemented.
+The user uploads a resume (text-based PDF, DOCX, or TXT) or pastes text, pastes a job description, selects a review focus, and clicks **Review my resume**. The app sends these texts to a Gemini model, validates the returned JSON and quoted evidence, then displays strengths, requirement comparisons, priorities, draft bullet revisions, and interview talking points. A Markdown export is available. Files are parsed in memory; no database or logging of document content is implemented.
 
 ## Run in VS Code
 
@@ -26,7 +26,7 @@ The user uploads a resume (text-based PDF, DOCX, or TXT) or pastes text, pastes 
    python -m pip install -r requirements.txt
    ```
 
-5. Copy `.env.example` to `.env` and replace `replace_with_your_api_key` with your own OpenAI API key. The API may incur charges. Do not commit `.env` to GitHub.
+5. Create a Gemini API key using [Google AI Studio](https://ai.google.dev/gemini-api/docs/api-key). Copy `.env.example` to `.env` and replace `replace_with_your_gemini_api_key` with that key. If `.env` already exists, add `GEMINI_API_KEY=your_key` and `GEMINI_MODEL=gemini-3.8-flash` to it. An OpenAI key cannot be used for Gemini. API use may incur charges. Do not commit `.env` to GitHub.
 6. Start the app:
 
    ```bash
@@ -49,7 +49,7 @@ The prompt also treats resume and job text as untrusted data, limits the output 
 
 - Scanned/image-only PDFs need OCR; DOCX text in shapes or images may be missed.
 - The AI may make a judgment mistake even when quotes are verified. Review the draft edits against the source documents.
-- The live call requires a valid OpenAI key, model access, account credit, and internet connectivity.
+- The live call requires a valid Gemini key, model access, available quota, and internet connectivity. Google AI Studio shows usage and project access. [Google's pricing page](https://ai.google.dev/gemini-api/docs/pricing) says free-tier submitted data may be used to improve its products; review this before sending personal resumes.
 - The app caps extracted resume and job text at 18,000 characters each; only the first part is analyzed if longer.
 
 Run focused checks from the repository root with `python -m pip install pytest` followed by `python -m pytest -q`. GitHub Actions runs the same checks on each push and pull request. These checks mock the model, so they do not spend API credit. A real model call must be tested with your key before recording.

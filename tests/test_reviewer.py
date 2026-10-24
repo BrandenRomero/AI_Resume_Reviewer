@@ -1,10 +1,10 @@
 import io
 import json
+from types import SimpleNamespace
 
 import pytest
 from docx import Document
-from httpx import Request, Response
-from openai import RateLimitError
+from google.genai import errors
 
 from reviewer import ReviewError, analyze, extract_resume, validate_review
 
@@ -58,37 +58,36 @@ def test_retry_after_invalid_model_quote():
     bad = review_data()
     bad["requirements"][0]["resume_evidence"] = "Invented project result"
 
-    class FakeCompletions:
+    class FakeModels:
         def __init__(self):
             self.calls = 0
+            self.prompts = []
 
-        def create(self, **kwargs):
+        def generate_content(self, **kwargs):
             self.calls += 1
+            self.prompts.append(kwargs["contents"])
+            assert kwargs["config"].response_mime_type == "application/json"
             body = bad if self.calls == 1 else review_data()
-            return type("Response", (), {"choices": [type("Choice", (), {
-                "message": type("Message", (), {"content": json.dumps(body)})()})()]})()
+            return SimpleNamespace(text=json.dumps(body))
 
-    completions = FakeCompletions()
-    fake = type("Client", (), {"chat": type("Chat", (), {"completions": completions})()})()
+    models = FakeModels()
+    fake = SimpleNamespace(models=models)
     output = analyze(RESUME, JOB, "Balanced review", "test-key", client_factory=lambda **kwargs: fake)
-    assert completions.calls == 2
+    assert models.calls == 2
+    assert "Validation failed" in models.prompts[1]
     assert output["requirements"][0]["status"] == "evidenced"
 
 
 def test_missing_key_prevents_request():
-    with pytest.raises(ReviewError, match="OPENAI_API_KEY"):
+    with pytest.raises(ReviewError, match="GEMINI_API_KEY"):
         analyze(RESUME, JOB, "Balanced review", "")
 
 
-def test_exhausted_api_credit_has_actionable_error():
-    class FailingCompletions:
-        def create(self, **kwargs):
-            response = Response(429, request=Request("POST", "https://api.openai.com/v1/chat/completions"))
-            raise RateLimitError(
-                "Quota exhausted", response=response,
-                body={"code": "credit_balance_exhausted"},
-            )
+def test_gemini_quota_has_actionable_error():
+    class FailingModels:
+        def generate_content(self, **kwargs):
+            raise errors.APIError(429, {"message": "Quota exhausted"})
 
-    fake = type("Client", (), {"chat": type("Chat", (), {"completions": FailingCompletions()})()})()
-    with pytest.raises(ReviewError, match="credits are exhausted"):
+    fake = SimpleNamespace(models=FailingModels())
+    with pytest.raises(ReviewError, match="Gemini quota or rate limit"):
         analyze(RESUME, JOB, "Balanced review", "test-key", client_factory=lambda **kwargs: fake)

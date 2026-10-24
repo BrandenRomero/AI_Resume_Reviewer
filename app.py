@@ -6,12 +6,18 @@ import os
 from pathlib import Path
 
 import streamlit as st
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 from reviewer import ReviewError, analyze, export_markdown, extract_resume
 
-load_dotenv()
 ROOT = Path(__file__).parent
+
+
+def setting(name: str, default: str = "") -> str:
+    """Read local settings on each review so newly saved keys work immediately."""
+    return (dotenv_values(ROOT / ".env").get(name) or os.getenv(name) or default).strip()
+
+
 st.set_page_config(page_title="ResumeLens | AI Resume Reviewer", page_icon="📄", layout="wide")
 st.markdown("""
 <style>
@@ -31,7 +37,7 @@ with st.sidebar:
     st.header("How it works")
     st.write("1. Upload or paste a resume.\n\n2. Paste the job description.\n\n3. Review matches, gaps, and draft edits.")
     st.divider()
-    st.info("Your resume and job description are sent to the OpenAI API when you click Review. This app does not store them in a database. Avoid sharing sensitive details you do not want to send.")
+    st.info("Your resume and job description are sent to the Gemini API when you click Review. This app does not store them in a database. Google's free tier may use submitted data to improve its products; avoid sharing sensitive details you do not want to send.")
     st.caption("This is coaching feedback, not a hiring decision or an ATS score.")
 
 sample = st.button("Load sample resume + job", help="Use fictional data for the live demo")
@@ -60,10 +66,10 @@ if run:
     try:
         if uploaded is not None:
             resume_text = extract_resume(uploaded.name, uploaded.getvalue())
-        key = os.getenv("OPENAI_API_KEY", "")
+        key = setting("GEMINI_API_KEY")
         with st.spinner("Comparing your experience with the posting…"):
             review = analyze(resume_text, job_text, focus, key,
-                             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
+                             model=setting("GEMINI_MODEL", "gemini-3.8-flash"))
         st.session_state["review"] = review
     except ReviewError as exc:
         st.error(str(exc))

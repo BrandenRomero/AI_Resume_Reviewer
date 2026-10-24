@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from typing import Any, Callable
 
 from docx import Document
 from google import genai
 from google.genai import errors, types
 from pypdf import PdfReader
+from pydantic import BaseModel, Field
 
 MAX_BYTES = 5 * 1024 * 1024
 MAX_CHARS = 18_000
@@ -17,6 +19,29 @@ MAX_CHARS = 18_000
 
 class ReviewError(Exception):
     """A user-facing input or model error."""
+
+
+class RequirementSchema(BaseModel):
+    requirement: str
+    status: str
+    job_evidence: str = Field(description="Exact excerpt from the job posting, or empty string")
+    resume_evidence: str = Field(description="Exact excerpt from the resume, or empty string")
+    note: str
+
+
+class BulletRewriteSchema(BaseModel):
+    original: str = Field(description="Exact excerpt from the resume")
+    suggestion: str
+    why: str
+
+
+class ReviewSchema(BaseModel):
+    summary: str
+    strengths: list[str]
+    requirements: list[RequirementSchema]
+    priorities: list[str]
+    bullet_rewrites: list[BulletRewriteSchema]
+    interview_talking_points: list[str]
 
 
 def extract_resume(filename: str, contents: bytes) -> str:
@@ -96,6 +121,19 @@ def _short(value: Any, limit: int = 600) -> str:
     return str(value).strip()[:limit] if isinstance(value, str) else ""
 
 
+def _source_quote(quote: str, source: str) -> str:
+    """Return an exact source slice, accepting only whitespace differences."""
+    if not quote:
+        return ""
+    if quote in source:
+        return quote
+    words = quote.split()
+    if not words:
+        return ""
+    match = re.search(r"\s+".join(re.escape(word) for word in words), source)
+    return match.group(0) if match else ""
+
+
 def validate_review(data: Any, resume: str, job: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ReviewError("The model did not return a review object.")
@@ -120,10 +158,13 @@ def validate_review(data: Any, resume: str, job: str) -> dict[str, Any]:
         if row["status"] not in ("evidenced", "partial", "not shown"):
             continue
         # Reject invalid quotes so the second model pass can correct them.
-        if row["job_evidence"] and row["job_evidence"] not in job:
+        job_quote = _source_quote(row["job_evidence"], job)
+        resume_quote = _source_quote(row["resume_evidence"], resume)
+        if row["job_evidence"] and not job_quote:
             raise ReviewError("A job evidence quote was not found in the posting.")
-        if row["resume_evidence"] and row["resume_evidence"] not in resume:
+        if row["resume_evidence"] and not resume_quote:
             raise ReviewError("A resume evidence quote was not found in the resume.")
+        row["job_evidence"], row["resume_evidence"] = job_quote, resume_quote
         if row["status"] == "evidenced" and not row["resume_evidence"]:
             raise ReviewError("An evidenced requirement needs a resume quote.")
         if row["requirement"]:
@@ -136,8 +177,10 @@ def validate_review(data: Any, resume: str, job: str) -> dict[str, Any]:
         if not isinstance(item, dict):
             continue
         row = {key: _short(item.get(key), 1000) for key in ("original", "suggestion", "why")}
-        if row["original"] and row["original"] not in resume:
+        original = _source_quote(row["original"], resume)
+        if row["original"] and not original:
             raise ReviewError("A bullet rewrite did not quote the actual resume.")
+        row["original"] = original
         if row["original"] and row["suggestion"]:
             rewrites.append(row)
     result["bullet_rewrites"] = rewrites
@@ -151,7 +194,7 @@ def analyze(resume: str, job: str, focus: str, api_key: str, model: str = "gemin
         raise ReviewError("Enter at least 80 characters of resume text and job description.")
     if not api_key:
         raise ReviewError("Set GEMINI_API_KEY in a .env file or your environment.")
-    client = client_factory(api_key=api_key, http_options=types.HttpOptions(timeout=60_000))
+    client = client_factory(api_key=api_key, http_options=types.HttpOptions(timeout=120_000))
     prompt = user_prompt(resume, job, focus)
     for attempt in range(2):
         raw = ""
@@ -161,6 +204,9 @@ def analyze(resume: str, job: str, focus: str, api_key: str, model: str = "gemin
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
                     response_mime_type="application/json",
+                    response_json_schema=ReviewSchema.model_json_schema(),
+                    thinking_config=(types.ThinkingConfig(thinking_level="low")
+                                     if model.startswith("gemini-3.") else None),
                 ),
             )
             raw = response.text or ""
@@ -168,7 +214,7 @@ def analyze(resume: str, job: str, focus: str, api_key: str, model: str = "gemin
             return validate_review(parsed, resume, job)
         except (ValueError, ReviewError) as exc:
             if attempt:
-                raise ReviewError("The AI returned an invalid review after one retry. Please try again.") from exc
+                raise ReviewError(f"The AI returned an invalid review: {exc}") from exc
             # ITERATIVE REFINEMENT pattern: feed the validation failure into a second pass.
             prompt += (
                 f"\n\nPrevious invalid JSON:\n{raw[:12_000]}\n"

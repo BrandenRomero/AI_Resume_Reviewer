@@ -54,6 +54,19 @@ def test_evidence_must_be_exact():
         validate_review(bad, RESUME, JOB)
 
 
+def test_whitespace_only_quote_changes_resolve_to_exact_source():
+    data = review_data()
+    data["requirements"][0]["resume_evidence"] = (
+        "Built a Flask API for searching records with Python and SQLite."
+    )
+    resume = RESUME.replace("searching records", "searching\nrecords")
+    result = validate_review(data, resume, JOB)
+    assert result["requirements"][0]["resume_evidence"] == (
+        "Built a Flask API for searching\nrecords with Python and SQLite."
+    )
+    assert result["requirements"][0]["resume_evidence"] in resume
+
+
 def test_retry_after_invalid_model_quote():
     bad = review_data()
     bad["requirements"][0]["resume_evidence"] = "Invented project result"
@@ -67,6 +80,9 @@ def test_retry_after_invalid_model_quote():
             self.calls += 1
             self.prompts.append(kwargs["contents"])
             assert kwargs["config"].response_mime_type == "application/json"
+            schema = kwargs["config"].response_json_schema
+            assert set(schema["required"]) == set(review_data())
+            assert kwargs["config"].thinking_config.thinking_level.value == "LOW"
             body = bad if self.calls == 1 else review_data()
             return SimpleNamespace(text=json.dumps(body))
 

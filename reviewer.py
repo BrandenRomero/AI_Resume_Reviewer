@@ -7,7 +7,7 @@ import json
 from typing import Any, Callable
 
 from docx import Document
-from openai import AuthenticationError, OpenAI
+from openai import AuthenticationError, OpenAI, RateLimitError
 from pypdf import PdfReader
 
 MAX_BYTES = 5 * 1024 * 1024
@@ -175,6 +175,18 @@ def analyze(resume: str, job: str, focus: str, api_key: str, model: str = "gpt-4
                 "OpenAI rejected the API key. Replace OPENAI_API_KEY in .env with an active "
                 "key from your OpenAI Platform project, then try again."
             ) from exc
+        except RateLimitError as exc:
+            code = getattr(exc, "code", None)
+            if code == "credit_balance_exhausted":
+                raise ReviewError(
+                    "OpenAI API credits are exhausted. Add credits in your OpenAI Platform "
+                    "billing settings, then try again."
+                ) from exc
+            if code in {"organization_spend_limit_exceeded", "project_spend_limit_exceeded"}:
+                raise ReviewError("OpenAI API spend limit reached. Check your Platform billing limits.") from exc
+            if code == "organization_usage_limit_exceeded":
+                raise ReviewError("OpenAI API usage limit reached. Check your Platform usage limits.") from exc
+            raise ReviewError("OpenAI rate limit reached. Wait briefly and try again.") from exc
         except Exception as exc:
             raise ReviewError("The AI request failed. Check the API key, model access, network, and account balance.") from exc
     raise ReviewError("Unable to complete the review.")

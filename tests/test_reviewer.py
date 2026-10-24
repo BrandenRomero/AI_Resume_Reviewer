@@ -3,6 +3,8 @@ import json
 
 import pytest
 from docx import Document
+from httpx import Request, Response
+from openai import RateLimitError
 
 from reviewer import ReviewError, analyze, extract_resume, validate_review
 
@@ -76,3 +78,17 @@ def test_retry_after_invalid_model_quote():
 def test_missing_key_prevents_request():
     with pytest.raises(ReviewError, match="OPENAI_API_KEY"):
         analyze(RESUME, JOB, "Balanced review", "")
+
+
+def test_exhausted_api_credit_has_actionable_error():
+    class FailingCompletions:
+        def create(self, **kwargs):
+            response = Response(429, request=Request("POST", "https://api.openai.com/v1/chat/completions"))
+            raise RateLimitError(
+                "Quota exhausted", response=response,
+                body={"code": "credit_balance_exhausted"},
+            )
+
+    fake = type("Client", (), {"chat": type("Chat", (), {"completions": FailingCompletions()})()})()
+    with pytest.raises(ReviewError, match="credits are exhausted"):
+        analyze(RESUME, JOB, "Balanced review", "test-key", client_factory=lambda **kwargs: fake)

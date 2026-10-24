@@ -7,7 +7,7 @@ import json
 from typing import Any, Callable
 
 from docx import Document
-from openai import OpenAI
+from openai import AuthenticationError, OpenAI
 from pypdf import PdfReader
 
 MAX_BYTES = 5 * 1024 * 1024
@@ -170,6 +170,11 @@ def analyze(resume: str, job: str, focus: str, api_key: str, model: str = "gpt-4
                 {"role": "assistant", "content": (raw or "")[:12_000]},
                 {"role": "user", "content": f"Revise the JSON. Validation failed: {exc}. Keep all quoted evidence as exact document substrings."},
             ])
+        except AuthenticationError as exc:
+            raise ReviewError(
+                "OpenAI rejected the API key. Replace OPENAI_API_KEY in .env with an active "
+                "key from your OpenAI Platform project, then try again."
+            ) from exc
         except Exception as exc:
             raise ReviewError("The AI request failed. Check the API key, model access, network, and account balance.") from exc
     raise ReviewError("Unable to complete the review.")
